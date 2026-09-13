@@ -7,12 +7,13 @@ namespace GunsawRectTool;
 
 public sealed class RectTool : MonoBehaviour
 {
+    private const int MoveHandle = 4;
     private LevelEditor editor = null!;
     private SpriteRenderer? target;
     private int handle = -1;
     private int operation;
     private bool changed;
-    private Vector3 startMouse, startScale, pivot, anchor;
+    private Vector3 startMouse, startScale, startPosition, pivot, anchor;
     private Quaternion startRotation;
     private Matrix4x4 startInverse;
     private Bounds startBounds;
@@ -47,7 +48,7 @@ public sealed class RectTool : MonoBehaviour
             else if (Input.GetKeyDown(KeyCode.Alpha4))
             {
                 SwitchMode(3);
-                editor.SetInfoText("Rect tool: drag corners; Shift: edges; Ctrl: rotate; Alt: no snap");
+                editor.SetInfoText("Rect tool: drag inside to move; corners to resize; Shift: edges; Ctrl: rotate; Alt: no snap");
             }
         }
         if (IsDragging)
@@ -94,11 +95,16 @@ public sealed class RectTool : MonoBehaviour
             float candidate = ((Vector2)screen - (Vector2)Input.mousePosition).sqrMagnitude;
             if (screen.z > 0 && candidate <= distance) { hit = i; distance = candidate; }
         }
-        if (hit < 0) return false;
+        var selection = editor.selectedObjects;
+        if (hit < 0)
+        {
+            if (selection.Count != 1 || !InsideRect(selection[0].GetComponent<SpriteRenderer>()))
+                return false;
+            hit = MoveHandle;
+        }
         editor.primarySelectedObject = null!;
         // Capture group handles too, so clicking one cannot clear or cycle the selection.
         handle = hit;
-        var selection = editor.selectedObjects;
         target = selection.Count == 1 ? selection[0].GetComponent<SpriteRenderer>() : null;
         changed = false;
         if (target != null) BeginOperation();
@@ -109,6 +115,18 @@ public sealed class RectTool : MonoBehaviour
     {
         var selection = editor.selectedObjects;
         return target == null ? selection.Count > 1 : selection.Count == 1 && selection[0] == target.gameObject;
+    }
+
+    private static bool InsideRect(SpriteRenderer renderer)
+    {
+        if (renderer == null || renderer.sprite == null) return false;
+        var ray = Camera.main.ScreenPointToRay(Input.mousePosition);
+        var plane = new Plane(renderer.transform.forward, renderer.transform.position);
+        if (!plane.Raycast(ray, out float distance)) return false;
+        Vector3 point = renderer.transform.InverseTransformPoint(ray.GetPoint(distance));
+        Bounds bounds = LocalBounds(renderer);
+        return point.x >= bounds.min.x && point.x <= bounds.max.x &&
+            point.y >= bounds.min.y && point.y <= bounds.max.y;
     }
 
     private Vector3 Mouse()
@@ -128,11 +146,12 @@ public sealed class RectTool : MonoBehaviour
     private void BeginOperation()
     {
         if (target == null) return;
-        operation = Operation;
+        operation = handle == MoveHandle ? 3 : Operation;
         direction = Direction(handle, operation == 1);
         startBounds = LocalBounds(target);
         startInverse = target.transform.worldToLocalMatrix;
         startScale = target.transform.localScale;
+        startPosition = target.transform.position;
         startRotation = target.transform.rotation;
         startMouse = Mouse();
         operationMouseScreen = Input.mousePosition;
@@ -145,7 +164,7 @@ public sealed class RectTool : MonoBehaviour
     private void Drag()
     {
         if (target == null) return;
-        if (operation != Operation) BeginOperation();
+        if (handle != MoveHandle && operation != Operation) BeginOperation();
         moved |= ((Vector2)Input.mousePosition - operationMouseScreen).sqrMagnitude > 9f;
         if (!moved) return;
         var transform = target.transform;
@@ -153,7 +172,19 @@ public sealed class RectTool : MonoBehaviour
         Quaternion oldRotation = transform.rotation;
         Vector2 oldSize = target.size;
         Vector3 mouse = Mouse();
-        if (operation == 2)
+        if (operation == 3)
+        {
+            Vector3 position = startPosition + mouse - startMouse;
+            if (!Unsnapped && editor.altGridSnapValue > 0)
+            {
+                float grid = editor.altGridSnapValue;
+                position.x = Mathf.Round(position.x / grid) * grid;
+                position.y = Mathf.Round(position.y / grid) * grid;
+            }
+            position.z = startPosition.z;
+            transform.position = position;
+        }
+        else if (operation == 2)
         {
             float angle = Mathf.DeltaAngle(startAngle, Mathf.Atan2(mouse.y - pivot.y, mouse.x - pivot.x) * Mathf.Rad2Deg);
             if (!Unsnapped) angle = Mathf.Round(angle / 15f) * 15f;
