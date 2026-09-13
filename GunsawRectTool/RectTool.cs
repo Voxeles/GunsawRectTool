@@ -7,11 +7,19 @@ namespace GunsawRectTool;
 
 public sealed class RectTool : MonoBehaviour
 {
+    private enum RectOperation
+    {
+        ResizeCorner,
+        ResizeEdge,
+        Rotate,
+        Move
+    }
+
     private const int MoveHandle = 4;
     private LevelEditor editor = null!;
     private SpriteRenderer? target;
     private int handle = -1;
-    private int operation;
+    private RectOperation operation;
     private bool changed;
     private Vector3 startMouse, startScale, startPosition, pivot, anchor;
     private Quaternion startRotation;
@@ -28,7 +36,8 @@ public sealed class RectTool : MonoBehaviour
     private static bool Ctrl => Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
     private static bool Shift => Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
     private static bool Unsnapped => Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt);
-    private static int Operation => Ctrl ? 2 : Shift ? 1 : 0;
+    private static RectOperation Operation => Ctrl ? RectOperation.Rotate :
+        Shift ? RectOperation.ResizeEdge : RectOperation.ResizeCorner;
     private static bool Typing => EventSystem.current != null && EventSystem.current.currentSelectedGameObject != null &&
         (EventSystem.current.currentSelectedGameObject.GetComponent<TMP_InputField>() != null ||
          EventSystem.current.currentSelectedGameObject.GetComponent<UnityEngine.UI.InputField>() != null);
@@ -146,8 +155,8 @@ public sealed class RectTool : MonoBehaviour
     private void BeginOperation()
     {
         if (target == null) return;
-        operation = handle == MoveHandle ? 3 : Operation;
-        direction = Direction(handle, operation == 1);
+        operation = handle == MoveHandle ? RectOperation.Move : Operation;
+        direction = Direction(handle, operation == RectOperation.ResizeEdge);
         startBounds = LocalBounds(target);
         startInverse = target.transform.worldToLocalMatrix;
         startScale = target.transform.localScale;
@@ -172,7 +181,7 @@ public sealed class RectTool : MonoBehaviour
         Quaternion oldRotation = transform.rotation;
         Vector2 oldSize = target.size;
         Vector3 mouse = Mouse();
-        if (operation == 3)
+        if (operation == RectOperation.Move)
         {
             Vector3 position = startPosition + mouse - startMouse;
             if (!Unsnapped && editor.altGridSnapValue > 0)
@@ -184,7 +193,7 @@ public sealed class RectTool : MonoBehaviour
             position.z = startPosition.z;
             transform.position = position;
         }
-        else if (operation == 2)
+        else if (operation == RectOperation.Rotate)
         {
             float angle = Mathf.DeltaAngle(startAngle, Mathf.Atan2(mouse.y - pivot.y, mouse.x - pivot.x) * Mathf.Rad2Deg);
             if (!Unsnapped) angle = Mathf.Round(angle / 15f) * 15f;
@@ -289,7 +298,7 @@ public sealed class RectTool : MonoBehaviour
             for (int i = 0; i < 4; ++i)
                 corners[i] = group.center + Vector3.Scale(group.extents, Direction(i, false));
         for (int i = 0; i < 4; ++i)
-            handles[i] = Operation == 1 ? (corners[i] + corners[(i + 1) % 4]) * 0.5f : corners[i];
+            handles[i] = Operation == RectOperation.ResizeEdge ? (corners[i] + corners[(i + 1) % 4]) * 0.5f : corners[i];
         return true;
     }
 
