@@ -1,0 +1,59 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <BepInExPluginGuid>voxeles.gunsaw.rect.tool</BepInExPluginGuid>
+    <ProjectName>GunsawRectTool</ProjectName>
+    <Version>0.0.0</Version>
+    <AssemblyName>$(ProjectName)</AssemblyName>
+    <Product>$(ProjectName)</Product>
+    <BepInExPluginName>$(ProjectName)</BepInExPluginName>
+    <BepInExPluginVersion>$(Version)</BepInExPluginVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <RestoreAdditionalProjectSources>
+      https://api.nuget.org/v3/index.json;
+      https://nuget.bepinex.dev/v3/index.json;
+      https://nuget.samboy.dev/v3/index.json
+    </RestoreAdditionalProjectSources>
+  </PropertyGroup>
+
+  <Import Project="../vars.targets" />
+
+  <ItemGroup>
+    <None Include="../vars.targets" Link="vars.targets" />
+    <PackageReference Include="BepInEx.Analyzers" Version="1.*" PrivateAssets="all" />
+    <PackageReference Include="BepInEx.Core" Version="5.*" />
+    <PackageReference Include="BepInEx.PluginInfoProps" Version="2.*" />
+    <PackageReference Include="UnityEngine.Modules" Version="2021.1.16" IncludeAssets="compile" />
+
+    <Reference Include="Assembly-CSharp" Publicize="true">
+      <HintPath>$(GameAssembliesDir)/Assembly-CSharp.dll</HintPath>
+    </Reference>
+
+    <Reference Include="UnityEngine.UI">
+      <HintPath>$(GameAssembliesDir)/UnityEngine.UI.dll</HintPath>
+    </Reference>
+
+    <Reference Include="Unity.TextMeshPro">
+      <HintPath>$(GameAssembliesDir)/Unity.TextMeshPro.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+  <PropertyGroup>
+    <RequiredFilesToCopy>$(ProjectName).dll;$(ProjectName).pdb</RequiredFilesToCopy>
+  </PropertyGroup>
+
+  <Target Name="ValidateTemplatePaths" BeforeTargets="ResolveReferences">
+    <Error Condition="!Exists('$(GameAssembliesDir)/Assembly-CSharp.dll')"
+           Text="Could not find Assembly-CSharp.dll. Update ManualBaseGamePath in vars.targets or pass /p:BaseGamePath=... when building." />
+  </Target>
+
+  <Target Name="CopyOutputDllsToPluginsFolder" AfterTargets="AfterBuild" Condition="'$(RequiredFilesToCopy)'!=''">
+    <MakeDir Directories="$(BepInExDir)/plugins/$(ProjectName)" />
+    <CombinePath BasePath="$(OutDir)" Paths="$(RequiredFilesToCopy)">
+      <Output TaskParameter="CombinedPaths" ItemName="RequiredFilesToCopy_Combined" />
+    </CombinePath>
+    <Copy SourceFiles="@(RequiredFilesToCopy_Combined)" DestinationFolder="$(BepInExDir)/plugins/$(ProjectName)" />
+  </Target>
+</Project>

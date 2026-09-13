@@ -1,0 +1,14 @@
+<Project>
+  <PropertyGroup>
+
+    <!-- Path to the game's install directory, where Gunsaw.exe is located -->
+    <!-- Example: <ManualBaseGamePath>C:\Users\user\Desktop\gunsaw-demo-win</ManualBaseGamePath> -->
+    <!-- You can also pass it as a flag during building via /p:BaseGamePath=<path> -->
+    <!-- or set it as a global MSBuild property in your IDE of chioce -->
+    <ManualBaseGamePath> </ManualBaseGamePath>
+
+    <BaseGamePath Condition="'$(BaseGamePath)' == '' and '$(ManualBaseGamePath)' != ''">$(ManualBaseGamePath)</BaseGamePath>
+    <BepInExDir Condition="'$(BepInExDir)' == '' and '$(BaseGamePath)' != ''">$(BaseGamePath)\BepInEx</BepInExDir>
+    <GameAssembliesDir Condition="'$(GameAssembliesDir)' == '' and '$(BaseGamePath)' != ''">$(BaseGamePath)\Gunsaw_Data\Managed</GameAssembliesDir>
+  </PropertyGroup>
+</Project>
