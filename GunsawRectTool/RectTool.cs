@@ -259,7 +259,7 @@ public sealed class RectTool : MonoBehaviour
 
     private void DragGroup()
     {
-        if (handle != MoveHandle && operation != Operation) BeginGroupOperation();
+        UpdateOperation();
         moved |= ((Vector2)Input.mousePosition - operationMouseScreen).sqrMagnitude > 9f;
         if (!moved) return;
         Vector3 mouse = Mouse();
@@ -339,7 +339,7 @@ public sealed class RectTool : MonoBehaviour
             return;
         }
         if (target == null) return;
-        if (handle != MoveHandle && operation != Operation) BeginOperation();
+        UpdateOperation();
         moved |= ((Vector2)Input.mousePosition - operationMouseScreen).sqrMagnitude > 9f;
         if (!moved) return;
         var transform = target.transform;
@@ -406,6 +406,23 @@ public sealed class RectTool : MonoBehaviour
             editor.UpdateSelectionVisuals();
             RefreshFields();
         }
+    }
+
+    private void UpdateOperation()
+    {
+        RectOperation next = Operation;
+        if (operation == next) return;
+        bool cornerResize = operation == RectOperation.ResizeCorner || operation == RectOperation.ResizeUniform;
+        bool nextCornerResize = next == RectOperation.ResizeCorner || next == RectOperation.ResizeUniform;
+        if (cornerResize && nextCornerResize)
+        {
+            // Shift changes the constraint, not the drag's original geometry or anchor.
+            // On release discard the initial click offset so the corner reaches the cursor.
+            if (next == RectOperation.ResizeCorner) startMouse = startCorners[handle];
+            operation = next;
+            moved = true;
+        }
+        else BeginOperation();
     }
 
     private float UniformResizeScale(Vector3 mouse, float grid, float minimumHeight)
