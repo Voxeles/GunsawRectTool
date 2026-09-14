@@ -11,11 +11,12 @@ public sealed class RectTool : MonoBehaviour
     {
         ResizeCorner,
         ResizeEdge,
+        ResizeUniform,
         Rotate,
         Move
     }
 
-    private const int MoveHandle = 4;
+    private const int MoveHandle = 8;
     private LevelEditor editor = null!;
     private SpriteRenderer? target;
     private int handle = -1;
@@ -31,7 +32,7 @@ public sealed class RectTool : MonoBehaviour
     private Vector2 operationMouseScreen;
     private bool moved;
     private readonly Vector3[] corners = new Vector3[4];
-    private readonly Vector3[] handles = new Vector3[4];
+    private readonly Vector3[] handles = new Vector3[8];
     private readonly Vector3[] startCorners = new Vector3[4];
     private sealed class GroupItem
     {
@@ -48,8 +49,9 @@ public sealed class RectTool : MonoBehaviour
     private static bool Ctrl => Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
     private static bool Shift => Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
     private static bool Unsnapped => Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt);
-    private static RectOperation Operation => Ctrl ? RectOperation.Rotate :
-        Shift ? RectOperation.ResizeEdge : RectOperation.ResizeCorner;
+    private RectOperation Operation => handle == MoveHandle ? RectOperation.Move : Ctrl ? RectOperation.Rotate :
+        handle >= 4 ? RectOperation.ResizeEdge : Shift ? RectOperation.ResizeUniform : RectOperation.ResizeCorner;
+    private static int VisibleHandleCount => Shift ? 4 : 8;
     private static bool Typing => EventSystem.current != null && EventSystem.current.currentSelectedGameObject != null &&
         (EventSystem.current.currentSelectedGameObject.GetComponent<TMP_InputField>() != null ||
          EventSystem.current.currentSelectedGameObject.GetComponent<UnityEngine.UI.InputField>() != null);
@@ -69,7 +71,7 @@ public sealed class RectTool : MonoBehaviour
             else if (Input.GetKeyDown(KeyCode.Alpha4))
             {
                 SwitchMode(3);
-                editor.SetInfoText("Rect tool: drag inside to move; corners to resize; Shift: edges; Ctrl: rotate; Alt: no snap");
+                editor.SetInfoText("Rect tool: drag inside to move; corners to resize; Shift: preserve ratio; Ctrl: rotate; Alt: no snap");
             }
         }
         if (IsDragging)
@@ -110,7 +112,7 @@ public sealed class RectTool : MonoBehaviour
             return false;
         int hit = -1;
         float distance = 12f * 12f;
-        for (int i = 0; i < handles.Length; ++i)
+        for (int i = 0; i < VisibleHandleCount; ++i)
         {
             Vector3 screen = Camera.main.WorldToScreenPoint(handles[i]);
             float candidate = ((Vector2)screen - (Vector2)Input.mousePosition).sqrMagnitude;
@@ -201,7 +203,7 @@ public sealed class RectTool : MonoBehaviour
         }
         if (target == null) return;
         operation = handle == MoveHandle ? RectOperation.Move : Operation;
-        direction = Direction(handle, operation == RectOperation.ResizeEdge);
+        direction = Direction(handle % 4, handle >= 4 && handle < MoveHandle);
         startBounds = LocalBounds(target);
         startInverse = target.transform.worldToLocalMatrix;
         startMatrix = target.transform.localToWorldMatrix;
@@ -221,7 +223,7 @@ public sealed class RectTool : MonoBehaviour
     private void BeginGroupOperation()
     {
         operation = handle == MoveHandle ? RectOperation.Move : Operation;
-        direction = Direction(handle, operation == RectOperation.ResizeEdge);
+        direction = Direction(handle % 4, handle >= 4 && handle < MoveHandle);
         Bounds bounds = default;
         bool first = true;
         foreach (var item in groupItems)
@@ -280,9 +282,14 @@ public sealed class RectTool : MonoBehaviour
         else
         {
             if (startBounds.size.x <= 0.00001f || startBounds.size.y <= 0.00001f) return;
-            delta = SnapResizeDelta(delta, direction, grid);
-            ratio.x = RectMath.Resize(startBounds.size.x, delta.x, direction.x, 0.1f) / startBounds.size.x;
-            ratio.y = RectMath.Resize(startBounds.size.y, delta.y, direction.y, 0.1f) / startBounds.size.y;
+            if (operation == RectOperation.ResizeUniform)
+                ratio = Vector2.one * UniformResizeScale(mouse, grid, 0.1f);
+            else
+            {
+                delta = SnapResizeDelta(delta, direction, grid);
+                ratio.x = RectMath.Resize(startBounds.size.x, delta.x, direction.x, 0.1f) / startBounds.size.x;
+                ratio.y = RectMath.Resize(startBounds.size.y, delta.y, direction.y, 0.1f) / startBounds.size.y;
+            }
         }
 
         bool frameChanged = false;
@@ -368,12 +375,22 @@ public sealed class RectTool : MonoBehaviour
             Vector2 axes = direction;
             if (part.fixedYSize && !editor.bypassFixedSize) axes.y = 0;
             float grid = Unsnapped ? 0 : editor.altGridSnapValue;
-            delta = SnapResizeDelta(delta, axes, grid);
             float minY = part.fullName == "Asphalt" ? 0.143f : part.fullName == "Girder" ? 1.28f :
                 part.fullName == "One way platform" ? 0.57f : part.fullName == "Conveyor belt" ? 0.36f : 0.1f;
-            Vector2 size = new Vector2(
-                RectMath.Resize(startBounds.size.x, delta.x, axes.x, 0.1f),
-                RectMath.Resize(startBounds.size.y, delta.y, axes.y, minY));
+            Vector2 size;
+            if (operation == RectOperation.ResizeUniform)
+            {
+                // A fixed height and a fixed aspect ratio leave no resizing freedom.
+                if (axes.y == 0) return;
+                size = (Vector2)startBounds.size * UniformResizeScale(mouse, grid, minY);
+            }
+            else
+            {
+                delta = SnapResizeDelta(delta, axes, grid);
+                size = new Vector2(
+                    RectMath.Resize(startBounds.size.x, delta.x, axes.x, 0.1f),
+                    RectMath.Resize(startBounds.size.y, delta.y, axes.y, minY));
+            }
             if (target.drawMode != SpriteDrawMode.Simple) target.size = size;
             else
                 transform.localScale = new Vector3(startScale.x * size.x / startBounds.size.x,
@@ -391,6 +408,15 @@ public sealed class RectTool : MonoBehaviour
         }
     }
 
+    private float UniformResizeScale(Vector3 mouse, float grid, float minimumHeight)
+    {
+        Vector3 diagonal = startCorners[handle] - anchor;
+        Vector3 desired = diagonal + mouse - startMouse;
+        float minimum = Mathf.Max(0.1f / startBounds.size.x, minimumHeight / startBounds.size.y);
+        return RectMath.UniformScale(anchor.x, anchor.y, diagonal.x, diagonal.y,
+            desired.x, desired.y, grid, minimum);
+    }
+
     private Vector3 SnapResizeDelta(Vector3 delta, Vector2 axes, float grid)
     {
         if (grid <= 0) return delta;
@@ -404,7 +430,7 @@ public sealed class RectTool : MonoBehaviour
         }
         if (axes.x == 0 && axes.y == 0) return delta;
 
-        // Shift/fixed-height resizing must stay on its local axis. Snap an endpoint
+        // Edge/fixed-height resizing must stay on its local axis. Snap an endpoint
         // to a world grid line without projecting a snapped midpoint off that line.
         Vector3 localAxis = axes.x != 0 ? Vector3.right : Vector3.up;
         Vector3 worldAxis = startMatrix.MultiplyVector(localAxis);
@@ -497,7 +523,10 @@ public sealed class RectTool : MonoBehaviour
             for (int i = 0; i < 4; ++i)
                 corners[i] = group.center + Vector3.Scale(group.extents, Direction(i, false));
         for (int i = 0; i < 4; ++i)
-            handles[i] = Operation == RectOperation.ResizeEdge ? (corners[i] + corners[(i + 1) % 4]) * 0.5f : corners[i];
+        {
+            handles[i] = corners[i];
+            handles[i + 4] = (corners[i] + corners[(i + 1) % 4]) * 0.5f;
+        }
         return true;
     }
 
@@ -507,10 +536,11 @@ public sealed class RectTool : MonoBehaviour
         Color previous = GUI.color;
         GUI.color = new Color(0.3f, 0.85f, 1f);
         for (int i = 0; i < 4; ++i)
+            DrawLine(Camera.main.WorldToScreenPoint(corners[i]), Camera.main.WorldToScreenPoint(corners[(i + 1) % 4]));
+        for (int i = 0; i < VisibleHandleCount; ++i)
         {
             Vector3 screen = Camera.main.WorldToScreenPoint(handles[i]);
             if (screen.z <= 0) continue;
-            DrawLine(Camera.main.WorldToScreenPoint(corners[i]), Camera.main.WorldToScreenPoint(corners[(i + 1) % 4]));
             GUI.DrawTexture(new Rect(screen.x - 5, Screen.height - screen.y - 5, 10, 10), Texture2D.whiteTexture);
         }
         GUI.color = previous;

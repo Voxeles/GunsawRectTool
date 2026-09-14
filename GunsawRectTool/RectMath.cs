@@ -4,6 +4,18 @@ namespace GunsawRectTool;
 
 internal static class RectMath
 {
+    internal static float UniformScale(float anchorX, float anchorY, float diagonalX, float diagonalY,
+        float desiredX, float desiredY, float grid, float minimum)
+    {
+        float lengthSquared = diagonalX * diagonalX + diagonalY * diagonalY;
+        if (lengthSquared <= 0.00000001f) return 1f;
+        float scale = (desiredX * diagonalX + desiredY * diagonalY) / lengthSquared;
+        // Keep the corner on the original diagonal; independently snapping X/Y would distort the ratio.
+        scale += SnapAlongAxis(anchorX + diagonalX * scale, anchorY + diagonalY * scale,
+            diagonalX, diagonalY, grid);
+        return Math.Max(minimum, scale);
+    }
+
     internal static float MapFromAnchor(float position, float anchor, float scale) =>
         anchor + (position - anchor) * scale;
 
