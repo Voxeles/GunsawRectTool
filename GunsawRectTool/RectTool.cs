@@ -33,6 +33,16 @@ public sealed class RectTool : MonoBehaviour
     private readonly Vector3[] corners = new Vector3[4];
     private readonly Vector3[] handles = new Vector3[4];
     private readonly Vector3[] startCorners = new Vector3[4];
+    private sealed class GroupItem
+    {
+        internal SpriteRenderer Renderer = null!;
+        internal Vector3 Position, Center, Scale;
+        internal Quaternion Rotation;
+        internal Vector2 Size, LocalSize;
+        internal Vector2 WorldX, WorldY;
+    }
+    private readonly List<GroupItem> groupItems = new List<GroupItem>();
+    private bool IsGroup => groupItems.Count > 1;
 
     internal bool IsDragging => handle >= 0;
     private static bool Ctrl => Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
@@ -109,23 +119,51 @@ public sealed class RectTool : MonoBehaviour
         var selection = editor.selectedObjects;
         if (hit < 0)
         {
-            if (selection.Count != 1 || !InsideRect(selection[0].GetComponent<SpriteRenderer>()))
+            if (selection.Count == 1 ? !InsideRect(selection[0].GetComponent<SpriteRenderer>()) : !InsideGroupRect())
                 return false;
             hit = MoveHandle;
         }
         editor.primarySelectedObject = null!;
-        // Capture group handles too, so clicking one cannot clear or cycle the selection.
         handle = hit;
         target = selection.Count == 1 ? selection[0].GetComponent<SpriteRenderer>() : null;
+        groupItems.Clear();
+        if (selection.Count > 1)
+        {
+            foreach (var obj in selection)
+            {
+                var renderer = obj != null ? obj.GetComponent<SpriteRenderer>() : null;
+                if (renderer == null || renderer.sprite == null)
+                {
+                    handle = -1;
+                    groupItems.Clear();
+                    return false;
+                }
+                groupItems.Add(new GroupItem { Renderer = renderer });
+            }
+        }
         changed = false;
-        if (target != null) BeginOperation();
+        BeginOperation();
         return true;
     }
 
     private bool SelectionMatches()
     {
         var selection = editor.selectedObjects;
-        return target == null ? selection.Count > 1 : selection.Count == 1 && selection[0] == target.gameObject;
+        if (!IsGroup) return target != null && selection.Count == 1 && selection[0] == target.gameObject;
+        if (selection.Count != groupItems.Count) return false;
+        foreach (var item in groupItems)
+            if (item.Renderer == null || !selection.Contains(item.Renderer.gameObject)) return false;
+        return true;
+    }
+
+    private bool InsideGroupRect()
+    {
+        var ray = Camera.main.ScreenPointToRay(Input.mousePosition);
+        var plane = new Plane(Vector3.forward, corners[0]);
+        if (!plane.Raycast(ray, out float distance)) return false;
+        Vector3 point = ray.GetPoint(distance);
+        return point.x >= corners[0].x && point.x <= corners[2].x &&
+            point.y >= corners[0].y && point.y <= corners[2].y;
     }
 
     private static bool InsideRect(SpriteRenderer renderer)
@@ -156,6 +194,11 @@ public sealed class RectTool : MonoBehaviour
 
     private void BeginOperation()
     {
+        if (IsGroup)
+        {
+            BeginGroupOperation();
+            return;
+        }
         if (target == null) return;
         operation = handle == MoveHandle ? RectOperation.Move : Operation;
         direction = Direction(handle, operation == RectOperation.ResizeEdge);
@@ -175,8 +218,119 @@ public sealed class RectTool : MonoBehaviour
         startAngle = Mathf.Atan2(startMouse.y - pivot.y, startMouse.x - pivot.x) * Mathf.Rad2Deg;
     }
 
+    private void BeginGroupOperation()
+    {
+        operation = handle == MoveHandle ? RectOperation.Move : Operation;
+        direction = Direction(handle, operation == RectOperation.ResizeEdge);
+        Bounds bounds = default;
+        bool first = true;
+        foreach (var item in groupItems)
+        {
+            var transform = item.Renderer.transform;
+            Bounds local = LocalBounds(item.Renderer);
+            item.Position = transform.position;
+            item.Center = transform.TransformPoint(local.center);
+            item.Rotation = transform.rotation;
+            item.Scale = transform.localScale;
+            item.Size = item.Renderer.size;
+            item.LocalSize = local.size;
+            item.WorldX = transform.TransformVector(Vector3.right);
+            item.WorldY = transform.TransformVector(Vector3.up);
+            for (int i = 0; i < 4; ++i)
+            {
+                Vector3 corner = transform.TransformPoint(local.center + Vector3.Scale(local.extents, Direction(i, false)));
+                if (first) { bounds = new Bounds(corner, Vector3.zero); first = false; }
+                else bounds.Encapsulate(corner);
+            }
+        }
+        startBounds = bounds;
+        startMatrix = startInverse = Matrix4x4.identity;
+        for (int i = 0; i < 4; ++i)
+            startCorners[i] = bounds.center + Vector3.Scale(bounds.extents, Direction(i, false));
+        startMouse = Mouse();
+        operationMouseScreen = Input.mousePosition;
+        moved = false;
+        pivot = bounds.center;
+        anchor = bounds.center - Vector3.Scale(bounds.extents, direction);
+        startAngle = Mathf.Atan2(startMouse.y - pivot.y, startMouse.x - pivot.x) * Mathf.Rad2Deg;
+    }
+
+    private void DragGroup()
+    {
+        if (handle != MoveHandle && operation != Operation) BeginGroupOperation();
+        moved |= ((Vector2)Input.mousePosition - operationMouseScreen).sqrMagnitude > 9f;
+        if (!moved) return;
+        Vector3 mouse = Mouse();
+        Vector3 delta = mouse - startMouse;
+        float grid = Unsnapped ? 0 : editor.altGridSnapValue;
+        Vector2 ratio = Vector2.one;
+        Quaternion rotation = Quaternion.identity;
+        if (operation == RectOperation.Move)
+        {
+            delta.x = RectMath.SnapMove(delta.x, startCorners[0].x, startCorners[1].x, startCorners[2].x, startCorners[3].x, grid);
+            delta.y = RectMath.SnapMove(delta.y, startCorners[0].y, startCorners[1].y, startCorners[2].y, startCorners[3].y, grid);
+            delta.z = 0;
+        }
+        else if (operation == RectOperation.Rotate)
+        {
+            float angle = Mathf.DeltaAngle(startAngle, Mathf.Atan2(mouse.y - pivot.y, mouse.x - pivot.x) * Mathf.Rad2Deg);
+            if (!Unsnapped) angle = Mathf.Round(angle / 15f) * 15f;
+            rotation = Quaternion.AngleAxis(angle, Vector3.forward);
+        }
+        else
+        {
+            if (startBounds.size.x <= 0.00001f || startBounds.size.y <= 0.00001f) return;
+            delta = SnapResizeDelta(delta, direction, grid);
+            ratio.x = RectMath.Resize(startBounds.size.x, delta.x, direction.x, 0.1f) / startBounds.size.x;
+            ratio.y = RectMath.Resize(startBounds.size.y, delta.y, direction.y, 0.1f) / startBounds.size.y;
+        }
+
+        bool frameChanged = false;
+        foreach (var item in groupItems)
+        {
+            var renderer = item.Renderer;
+            var transform = renderer.transform;
+            Vector3 oldPosition = transform.position, oldScale = transform.localScale;
+            Quaternion oldRotation = transform.rotation;
+            Vector2 oldSize = renderer.size;
+            if (operation == RectOperation.Move)
+                transform.position = item.Position + delta;
+            else if (operation == RectOperation.Rotate)
+            {
+                transform.position = pivot + rotation * (item.Position - pivot);
+                transform.rotation = rotation * item.Rotation;
+            }
+            else
+            {
+                RectMath.FitGroupSize(Mathf.Abs(item.WorldX.x) * item.LocalSize.x,
+                    Mathf.Abs(item.WorldX.y) * item.LocalSize.x,
+                    Mathf.Abs(item.WorldY.x) * item.LocalSize.y,
+                    Mathf.Abs(item.WorldY.y) * item.LocalSize.y,
+                    ratio.x, ratio.y, out float localX, out float localY);
+                if (renderer.drawMode == SpriteDrawMode.Simple)
+                    transform.localScale = new Vector3(item.Scale.x * localX, item.Scale.y * localY, item.Scale.z);
+                else renderer.size = new Vector2(item.Size.x * localX, item.Size.y * localY);
+                Vector3 center = new Vector3(RectMath.MapFromAnchor(item.Center.x, anchor.x, ratio.x),
+                    RectMath.MapFromAnchor(item.Center.y, anchor.y, ratio.y), item.Center.z);
+                transform.position += center - transform.TransformPoint(LocalBounds(renderer).center);
+            }
+            frameChanged |= oldPosition != transform.position || oldRotation != transform.rotation ||
+                oldScale != transform.localScale || oldSize != renderer.size;
+        }
+        if (frameChanged)
+        {
+            changed = true;
+            editor.UpdateSelectionVisuals();
+        }
+    }
+
     private void Drag()
     {
+        if (IsGroup)
+        {
+            DragGroup();
+            return;
+        }
         if (target == null) return;
         if (handle != MoveHandle && operation != Operation) BeginOperation();
         moved |= ((Vector2)Input.mousePosition - operationMouseScreen).sqrMagnitude > 9f;
@@ -279,15 +433,23 @@ public sealed class RectTool : MonoBehaviour
 
     private void Finish()
     {
-        bool commit = IsDragging && changed && target != null && editor != null;
+        bool commit = IsDragging && changed && (target != null || IsGroup) && editor != null;
         handle = -1;
         changed = false;
         if (commit)
         {
             editor!.SaveState();
-            editor.SendTransformAction(new List<GameObject> { target!.gameObject });
+            var objects = new List<GameObject>();
+            if (IsGroup)
+            {
+                foreach (var item in groupItems)
+                    if (item.Renderer != null) objects.Add(item.Renderer.gameObject);
+            }
+            else if (target != null) objects.Add(target.gameObject);
+            editor.SendTransformAction(objects);
         }
         target = null;
+        groupItems.Clear();
     }
 
     private void OnDisable() => Finish();
@@ -343,7 +505,7 @@ public sealed class RectTool : MonoBehaviour
     {
         if (Event.current.type != EventType.Repaint || !Available || !Geometry()) return;
         Color previous = GUI.color;
-        GUI.color = editor.selectedObjects.Count > 1 ? new Color(0.7f, 0.7f, 0.7f) : new Color(0.3f, 0.85f, 1f);
+        GUI.color = new Color(0.3f, 0.85f, 1f);
         for (int i = 0; i < 4; ++i)
         {
             Vector3 screen = Camera.main.WorldToScreenPoint(handles[i]);

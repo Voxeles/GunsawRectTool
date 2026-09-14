@@ -4,6 +4,26 @@ namespace GunsawRectTool;
 
 internal static class RectMath
 {
+    internal static float MapFromAnchor(float position, float anchor, float scale) =>
+        anchor + (position - anchor) * scale;
+
+    // Solve the local-axis scales that produce the requested world bounding box.
+    // A rotated rectangle cannot always fill an arbitrary box without shear.
+    internal static void FitGroupSize(float xx, float xy, float yx, float yy,
+        float scaleX, float scaleY, out float localX, out float localY)
+    {
+        float width = xx + yx, height = xy + yy;
+        float desiredWidth = width * scaleX, desiredHeight = height * scaleY;
+        float determinant = xx * yy - yx * xy;
+        if (Math.Abs(determinant) > 0.000001f * Math.Max(width * height, 0.000001f))
+        {
+            localX = (desiredWidth * yy - yx * desiredHeight) / determinant;
+            localY = (xx * desiredHeight - desiredWidth * xy) / determinant;
+            if (localX > 0.00001f && localY > 0.00001f) return;
+        }
+        localX = localY = Math.Min(scaleX, scaleY);
+    }
+
     internal static float PivotCenter(float spriteCenter, float spriteSize, float size, bool flipped) =>
         spriteCenter / spriteSize * size * (flipped ? -1f : 1f);
 
