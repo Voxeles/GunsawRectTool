@@ -24,6 +24,7 @@ public sealed class RectTool : MonoBehaviour
     private Vector3 startMouse, startScale, startPosition, pivot, anchor;
     private Quaternion startRotation;
     private Matrix4x4 startInverse;
+    private Matrix4x4 startMatrix;
     private Bounds startBounds;
     private Vector2 direction;
     private float startAngle;
@@ -31,6 +32,7 @@ public sealed class RectTool : MonoBehaviour
     private bool moved;
     private readonly Vector3[] corners = new Vector3[4];
     private readonly Vector3[] handles = new Vector3[4];
+    private readonly Vector3[] startCorners = new Vector3[4];
 
     internal bool IsDragging => handle >= 0;
     private static bool Ctrl => Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl);
@@ -159,6 +161,9 @@ public sealed class RectTool : MonoBehaviour
         direction = Direction(handle, operation == RectOperation.ResizeEdge);
         startBounds = LocalBounds(target);
         startInverse = target.transform.worldToLocalMatrix;
+        startMatrix = target.transform.localToWorldMatrix;
+        for (int i = 0; i < 4; ++i)
+            startCorners[i] = startMatrix.MultiplyPoint3x4(startBounds.center + Vector3.Scale(startBounds.extents, Direction(i, false)));
         startScale = target.transform.localScale;
         startPosition = target.transform.position;
         startRotation = target.transform.rotation;
@@ -183,13 +188,14 @@ public sealed class RectTool : MonoBehaviour
         Vector3 mouse = Mouse();
         if (operation == RectOperation.Move)
         {
-            Vector3 position = startPosition + mouse - startMouse;
+            Vector3 delta = mouse - startMouse;
             if (!Unsnapped && editor.altGridSnapValue > 0)
             {
                 float grid = editor.altGridSnapValue;
-                position.x = Mathf.Round(position.x / grid) * grid;
-                position.y = Mathf.Round(position.y / grid) * grid;
+                delta.x = RectMath.SnapMove(delta.x, startCorners[0].x, startCorners[1].x, startCorners[2].x, startCorners[3].x, grid);
+                delta.y = RectMath.SnapMove(delta.y, startCorners[0].y, startCorners[1].y, startCorners[2].y, startCorners[3].y, grid);
             }
+            Vector3 position = startPosition + delta;
             position.z = startPosition.z;
             transform.position = position;
         }
@@ -208,11 +214,12 @@ public sealed class RectTool : MonoBehaviour
             Vector2 axes = direction;
             if (part.fixedYSize && !editor.bypassFixedSize) axes.y = 0;
             float grid = Unsnapped ? 0 : editor.altGridSnapValue;
+            delta = SnapResizeDelta(delta, axes, grid);
             float minY = part.fullName == "Asphalt" ? 0.143f : part.fullName == "Girder" ? 1.28f :
                 part.fullName == "One way platform" ? 0.57f : part.fullName == "Conveyor belt" ? 0.36f : 0.1f;
             Vector2 size = new Vector2(
-                RectMath.Resize(startBounds.size.x, delta.x, axes.x, grid, 0.1f),
-                RectMath.Resize(startBounds.size.y, delta.y, axes.y, grid, minY));
+                RectMath.Resize(startBounds.size.x, delta.x, axes.x, 0.1f),
+                RectMath.Resize(startBounds.size.y, delta.y, axes.y, minY));
             if (target.drawMode != SpriteDrawMode.Simple) target.size = size;
             else
                 transform.localScale = new Vector3(startScale.x * size.x / startBounds.size.x,
@@ -228,6 +235,36 @@ public sealed class RectTool : MonoBehaviour
             editor.UpdateSelectionVisuals();
             RefreshFields();
         }
+    }
+
+    private Vector3 SnapResizeDelta(Vector3 delta, Vector2 axes, float grid)
+    {
+        if (grid <= 0) return delta;
+        if (axes.x != 0 && axes.y != 0)
+        {
+            Vector3 corner = startCorners[handle];
+            Vector3 desired = corner + startMatrix.MultiplyVector(delta);
+            desired.x = RectMath.Snap(desired.x, grid);
+            desired.y = RectMath.Snap(desired.y, grid);
+            return startInverse.MultiplyVector(desired - corner);
+        }
+        if (axes.x == 0 && axes.y == 0) return delta;
+
+        // Shift/fixed-height resizing must stay on its local axis. Snap an endpoint
+        // to a world grid line without projecting a snapped midpoint off that line.
+        Vector3 localAxis = axes.x != 0 ? Vector3.right : Vector3.up;
+        Vector3 worldAxis = startMatrix.MultiplyVector(localAxis);
+        Vector3 displacement = worldAxis * (axes.x != 0 ? delta.x : delta.y);
+        float correction = float.PositiveInfinity;
+        for (int i = 0; i < 4; ++i)
+        {
+            Vector2 cornerDirection = Direction(i, false);
+            if (axes.x != 0 ? cornerDirection.x != axes.x : cornerDirection.y != axes.y) continue;
+            Vector3 desired = startCorners[i] + displacement;
+            float candidate = RectMath.SnapAlongAxis(desired.x, desired.y, worldAxis.x, worldAxis.y, grid);
+            if (Mathf.Abs(candidate) < Mathf.Abs(correction)) correction = candidate;
+        }
+        return delta + localAxis * correction;
     }
 
     private void RefreshFields()
