@@ -3,6 +3,7 @@ using System.Globalization;
 using TMPro;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.UI;
 
 namespace GunsawRectTool;
 
@@ -10,6 +11,8 @@ internal sealed class RectTool : MonoBehaviour
 {
     private LevelEditor editor = null!;
     private SpriteRenderer? target;
+
+    private bool buttonAdded = false;
 
     private enum RectOperation
     {
@@ -92,6 +95,9 @@ internal sealed class RectTool : MonoBehaviour
     {
         editor = instance;
 
+        if (!buttonAdded)
+            AddButton();
+
         if (!Typing)
         {
             // Handle mode switches before the editor dispatches this frame's mouse input
@@ -109,8 +115,7 @@ internal sealed class RectTool : MonoBehaviour
             }
             else if (Input.GetKeyDown(KeyCode.Alpha4))
             {
-                SwitchMode(3);
-                editor.SetInfoText("Rect tool: drag inside to move; corners to resize; Shift: preserve ratio; Ctrl: rotate; Alt: no snap");
+                SelectRectTool();
             }
 
             if (editor.mode == 3)
@@ -151,6 +156,54 @@ internal sealed class RectTool : MonoBehaviour
         Finish();
         editor.primarySelectedObject = null!;
         editor.SelectMode(mode);
+    }
+
+    private void SelectRectTool()
+    {
+        SwitchMode(3);
+        editor.SetInfoText("Rect tool: drag inside to move; corners to resize; Shift: preserve ratio; Ctrl: rotate; Alt: no snap");
+    }
+
+    private void AddButton()
+    {
+        buttonAdded = true;
+
+        TextMeshProUGUI[] labels = editor.texts;
+        Button? rotateButton = labels.Length == 3 ? labels[1].GetComponentInParent<Button>() : null;
+        Button? scaleButton = labels.Length == 3 ? labels[2].GetComponentInParent<Button>() : null;
+        if (rotateButton == null || scaleButton == null)
+        {
+            Plugin.Logger.LogWarning("Couldn't find the editor's mode buttons, the rect tool won't get a button");
+            return;
+        }
+
+        Transform scaleTransform = scaleButton.transform;
+        Button rectButton = Instantiate(scaleButton, scaleTransform.parent);
+        rectButton.name = "RectToolButton";
+        rectButton.transform.SetSiblingIndex(scaleTransform.GetSiblingIndex() + 1);
+
+        rectButton.transform.position = scaleTransform.position * 2f - rotateButton.transform.position;
+
+        rectButton.onClick = new Button.ButtonClickedEvent();
+        rectButton.onClick.AddListener(SelectRectTool);
+
+        TextMeshProUGUI rectLabel = FindCopy(labels[2], scaleTransform, rectButton.transform);
+        rectLabel.text = "Rect (4)";
+
+        editor.texts = [.. labels, rectLabel];
+    }
+
+    private static T FindCopy<T>(T original, Transform source, Transform copy) where T : Component
+    {
+        var path = new List<int>();
+        for (Transform current = original.transform; current != source; current = current.parent)
+            path.Add(current.GetSiblingIndex());
+
+        Transform result = copy;
+        for (var i = path.Count - 1; i >= 0; --i)
+            result = result.GetChild(path[i]);
+
+        return result.GetComponent<T>();
     }
 
     internal bool HandleInput()
