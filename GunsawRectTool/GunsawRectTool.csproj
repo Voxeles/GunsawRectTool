@@ -3,7 +3,7 @@
     <TargetFramework>netstandard2.0</TargetFramework>
     <BepInExPluginGuid>voxeles.gunsaw.rect.tool</BepInExPluginGuid>
     <ProjectName>GunsawRectTool</ProjectName>
-    <Version>0.0.0</Version>
+    <Version>1.0.0</Version>
     <AssemblyName>$(ProjectName)</AssemblyName>
     <Product>$(ProjectName)</Product>
     <BepInExPluginName>$(ProjectName)</BepInExPluginName>
